@@ -1,0 +1,109 @@
+#!/bin/bash
+
+# makedailymovie.sh - written by Claude Pageau.
+# Skip most recent file logic based on script by zengargoyle
+# This script will create a daily movie from jpg files in motion folder
+# It will then use mencoder to create avi movie and move it to a mount point
+# make sure you create the required mnt folders and create the fstab entry to mount
+# the remote share onto /home/pi/pi-timolo/mnt.  This folder MUST be empty before the share will mount.
+# Verify the share point is mounted before running this script.
+# Note the previous daily movie will be deleted when this script is run so you have 24 hours to
+# fix any copy problem to external share mount point folder.
+#
+# Add a crontab entry to the root crontab per the below.
+# make sure makedailymovie.sh is executable eg sudo chmod +x makedailymovie.sh
+#
+# sudo crontab -e
+#
+# Add similar crontab entry as line below (excluding the #).
+# This would execute makedailymovie.sh at 10pm every day
+#
+# 01 20 * * * /home/pi/pi-timolo/makedailymovie.sh
+
+# sudo rm /home/pi/pi-timolo/dailymovie/*jpg
+
+# get current working folder
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+FOLDER_SOURCE=$DIR
+FOLDER_DESTINATION=$DIR/movie
+MOVIENAME=$DIR/movie/dailymovie_$(date '+%Y%m%d').avi
+MOVIELIST=$DIR/imagelist.txt
+
+clear
+echo $0 " Working ..."
+echo "=========================================================================="
+echo "Movie Name  =" $MOVIENAME
+echo "Source      =" $FOLDER_SOURCE
+echo "Destination =" $FOLDER_DESTINATION
+echo "Image List  =" $MOVIELIST
+echo "=========================================================================="
+
+cd $FOLDER_DESTINATION
+
+if [ -f *.avi ]; then
+   rm *.avi
+   echo "delete avi"
+fi
+
+echo "Create jpg Image files List "$MOVIELIST
+echo "From Folder "$FOLDER_SOURCE
+
+cd $DIR
+
+echo "Making Daily Movie ... "$MOVIENAME
+echo "=========================================================================="
+/usr/bin/mencoder -nosound -ovc lavc -lavcopts vcodec=mpeg4:aspect=16/9:vbitrate=8000000 -vf scale=1280:720 -o $MOVIENAME -mf type=jpeg:fps=5  mf://@$MOVIELIST
+echo "=========================================================================="
+#echo "Copy "$MOVIENAME" to "$FOLDER_DESTINATION
+#cp $MOVIENAME $FOLDER_DESTINATION
+echo "Processing Complete ..."
+
+echo "Uploading now..."
+
+#echo $DIR
+if [ -z "$(pgrep drive)" ]
+  then
+    # Check for sync file indicating pi-timolo.py has new saved image files
+    if [ -e  $MOVIENAME ]
+    then
+      # Run drive for files in folder specified by variable $SYNC_DIR
+      echo "---------------------- PROCESSING ---------------------------------"
+      echo "Found movie file $MOVIENAME"
+      echo "Starting drive Push From $FOLDER_DESTINATION"
+#      echo "                      To  google drive subfolder $SYNC_DIR"
+      echo "-------------------------------------------------------------------"
+      cd $DIR
+      echo "Start synchronization ....."
+      echo "/usr/local/bin/drive push -no-prompt -ignore-conflict $MOVIENAME"
+      /usr/local/bin/drive push -no-prompt -ignore-conflict $MOVIENAME
+#      sudo /usr/local/bin/drive push -no-prompt -ignore-conflict $SYNC_DIR/*jpg
+      # Check if drive exited successfully
+      if [ $? -ne 0 ]
+      then
+        echo "ERROR - drive Processing failed."
+        echo "Possible Cause - No internet connection or some other reason."
+      else
+        echo "SUCCESS - $0 Processing completed successfully"
+      fi
+    else
+#      echo "Sync lock File Not Found $DIR/$SYNC_FILE"
+      echo "No movie files to process in $FOLDER_DESTINATION"
+    fi
+    cd $DIR
+else
+  # drive is already running so check how long and kill if past time limit
+  if [ -z "$(sudo ps axh -O etimes | grep drive | grep -v grep | sed 's/^ *//'| awk '{if ($2 >= 600) print $1}')" ]
+  then
+    RUNTIME=$(sudo ps axh -O etimes | grep drive | grep -v grep | sed 's/^ *//' | awk '{if ($2 > 0) print $2}' | head -1)
+    echo "Another Sync already running for "$RUNTIME" seconds."
+    echo "Will kill if greater than 600 seconds."
+  else
+    drivePID=$(pgrep drive)
+    echo "drive has run longer than 600 seconds so kill PID $drivePID"
+    KILLPID=$(ps axh -O etimes | grep drive | grep -v grep | awk '{if ($2 >= 600) print $1}')
+    echo "Killing $KILLPID"
+    sudo kill $KILLPID
+  fi
+fi
+echo "Done"
+exit
